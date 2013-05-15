@@ -27,14 +27,14 @@ A [Graphitus](https://github.com/erezmazor/graphitus) dashboard for the metrics 
 To use the graphitus dashboard, just copy the dashboard to your dashboard repository and replace the metric name prefix to your prefix in the dashboard json file.
 
 ### Example Graphs using Graphite and Graphitus
-![Failed maps per logical group](failed-maps-per-logical-group.png "Failed maps per logical group")
-![File bytes read per logical group](file-bytes-read-per-logical-group.png "File bytes read per logical group")
-![Job Counts per Submitting Host](job-counts-per-submitting-host.png "Job Counts per Submitting Host")
-![Job Counts per User](job-counts-per-user.png "Job Counts per User")
-![Job Durations per submitting host](job-duration-per-submitting-host.png "Job Durations per submitting host")
-![Map tasks per User](map-tasks-per-user.png "Map tasks per User")
-![Reduce bytes per jobname tag](reduce-bytes-per-jobname-tag.png "Reduce bytes per jobname tag")
-![Spilled record count per user](spilled-record-count-per-user.png "Spilled record count per user")
+![Failed maps per logical group](example-graph-images/failed-maps-per-logical-group.png "Failed maps per logical group")
+![File bytes read per logical group](example-graph-images/file-bytes-read-per-logical-group.png "File bytes read per logical group")
+![Job Counts per Submitting Host](example-graph-images/job-counts-per-submitting-host.png "Job Counts per Submitting Host")
+![Job Counts per User](example-graph-images/job-counts-per-user.png "Job Counts per User")
+![Job Durations per submitting host](example-graph-images/job-duration-per-submitting-host.png "Job Durations per submitting host")
+![Map tasks per User](example-graph-images/map-tasks-per-user.png "Map tasks per User")
+![Reduce bytes per jobname tag](example-graph-images/reduce-bytes-per-jobname-tag.png "Reduce bytes per jobname tag")
+![Spilled record count per user](example-graph-images/spilled-record-count-per-user.png "Spilled record count per user")
 
 ## Usage
 Just get the source files to your job tracker, and run ./hadoop-job-analyzer with the proper parameters using cron or any periodic scheduler.
