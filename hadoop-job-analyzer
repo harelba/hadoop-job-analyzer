@@ -1,0 +1,722 @@
+#!/usr/bin/python2.6
+
+# hadoop-job-analyzer
+#
+# This program analyzes the history/done folder of a hadoop jobtracker, aggregates metrics about the 
+# jobs and sends them to some monitoring system.
+#
+# Currently, only sending to graphite is supported. Other monitoring systems might be supported in the future.
+#
+#
+#
+# Author: Harel Ben-Attia, harelba on GitHub, @harelba on Twitter
+#
+# May 2013
+
+import os,sys,time
+import math
+import socket
+import csv
+import re
+import glob
+from optparse import OptionParser
+import traceback
+import logging
+import logging.handlers
+import random
+
+class CounterGroup(object):
+	"""
+	Represents a hadoop counter group, along with its counters
+	"""
+	def __init__(self,name,desc,counters):
+		self.name = name.replace("\\","").replace(".","_")
+		self.desc = desc
+		self.counters = counters
+
+	def __str__(self):
+		return "name=%s,counters=%d" % (self.name,len(self.counters))
+	__repr__ = __str__
+
+class Counter(object):
+	"""
+	Represents one hadoop counter
+	"""
+	def __init__(self,name,desc,value):
+		self.name = name.replace("\\","").replace(".","_")
+		self.desc = desc
+		self.value = value
+
+	def __str__(self):
+		return "%s=%s" % (self.name,self.value)
+	__repr__ = __str__
+
+class Counters(object):
+	"""
+	Parses a runtime job file counters string into relevant counter groups and counters
+	"""
+	def __init__(self,counters_str):
+		self.counters_str = counters_str
+		self.counter_groups = []
+		self.analyze()
+
+	def analyze(self):
+		# extract counter group info
+		counter_groups_re = re.compile('{\\((?P<name>.*?)\\)\\((?P<desc>.*?)\\)(?P<counters>.*?)}')
+		for counter_group in counter_groups_re.finditer(self.counters_str):
+			# extract counter info
+			counters_for_group_str = counter_group.group('counters')
+			individual_counters_re = re.compile('\\[\\((?P<name>.*?)\\)\\((?P<desc>.*?)\\)\\((?P<value>.*?)\\)\\]')
+
+			counters = []
+			for counter in individual_counters_re.finditer(counters_for_group_str):
+				c = Counter(counter.group('name'),counter.group('desc'),counter.group('value'))
+				counters.append(c)
+
+			cg = CounterGroup(counter_group.group('name'),counter_group.group('desc'),counters)
+			self.counter_groups.append(cg)
+
+	def __str__(self):
+		return "%d groups" % (len(self.counter_groups))
+	__repr__ = __str__
+
+class JobNameMetadataAnalyzer(object):
+	def __init__(self,regexp):
+		self.regexp = regexp
+		self.p = re.compile(regexp)
+
+	def get_expected_metadata(self):
+		return self.p.groupindex.keys()
+
+	def analyze(self,jobname):
+		m = self.p.search(jobname)
+		if m is not None:
+			return m.groupdict()
+		else:
+			return None
+
+class Job(object):
+	def __init__(self,conf_filename,runtime_filename,time_bucket_field,time_bucket_interval,job_name_metadata_regexp,maximum_jobname_metadata_length):
+		self.time_bucket_field = time_bucket_field
+		self.time_bucket_interval = time_bucket_interval
+		self.c = JobConfFile(conf_filename)
+		self.r = JobRuntimeFile(runtime_filename,job_name_metadata_regexp,maximum_jobname_metadata_length)
+		self.data = {}
+		self.analyze()
+
+	def analyze(self):
+		self.data.update(self.r.data)
+		self.data.update(self.c.data)
+
+		self.numerify_metrics()
+		self.convert_times_to_seconds()
+		self._calculate_durations_from_data()
+		self._create_time_bucket()
+
+	def convert_times_to_seconds(self):
+		"""
+		Converts all time related metrics to seconds instead of ms
+		"""
+		for k in self.data.keys():
+			if '_TIME' in k:
+				self.data[k] = float(self.data[k]/1000.0)
+
+	def numerify_metrics(self):
+		""" 
+		Converts all string numbers into actual floats
+		"""
+		for k in self.data.keys():
+			try:
+				float(self.data[k])
+				self.data[k] = float(self.data[k])
+			except:
+				pass
+
+	def _calculate_durations_from_data(self):
+		# Calculate durations based on the time data
+		self.data['LAUNCH_LATENCY'] = self.data['LAUNCH_TIME'] - self.data['SUBMIT_TIME']
+		self.data['TOTAL_DURATION'] = self.data['FINISH_TIME']- self.data['SUBMIT_TIME']
+		self.data['ACTUAL_DURATION'] = self.data['FINISH_TIME'] - self.data['LAUNCH_TIME']
+
+	def _create_time_bucket(self):
+		"""
+		TIME_BUCKET is the data being used for grouping the metrics by time.
+		
+		It is determined by rounding the provided time_bucket_field field.
+
+		For example, if time_bucket_field is 'SUBMIT_TIME' then all jobs will be aggregated over time using the rounded submit time
+		"""
+		# Create the time bucket to which the job should belong to.
+		self.data['TIME_BUCKET'] = int(math.floor(int(self.data[self.time_bucket_field]/float(self.time_bucket_interval))*float(self.time_bucket_interval)))
+
+
+class JobRuntimeFile(object):
+	"""
+	Encapsulates the parsing and data of a hadoop job runtime file
+	"""
+	def __init__(self,job_runtime_filename,job_name_metadata_spec,maximum_jobname_metadata_length):
+		self.job_runtime_filename = job_runtime_filename
+		self.job_name_metadata_spec = job_name_metadata_spec
+		self.maximum_jobname_metadata_length = maximum_jobname_metadata_length
+		self.data = {}
+		self.read_job_runtime_filename()
+		self.analyze_counters()
+		self.flatten_counters()
+		self.enrich_data()
+
+	def flatten_counters(self):
+		"""
+		Flattens all counter instances into separate counter_group.counter.value
+		"""
+		self.new_data = {}
+		for k,v in self.data.iteritems():
+			if not 'COUNTERS' in k:
+				self.new_data[k] = v
+			else:
+				self.new_entries = {}
+				for counter_group in v.counter_groups:
+					for counter in counter_group.counters:
+						self.new_entries['%s.%s.%s' % (k,counter_group.name,counter.name)] = counter.value
+				self.new_data.update(self.new_entries)
+
+		self.data = self.new_data
+						
+	def analyze_counters(self):
+		"""
+		Converts all counter information to an actual Counters object
+		"""
+		counters = {}
+		for k,v in self.data.iteritems():
+			if 'COUNTERS' in k:
+				c = Counters(v)
+				counters[k] = c
+
+		self.data.update(counters)
+				
+	def _enrich_data_using_job_name(self):
+		if self.job_name_metadata_spec is None:
+			return
+
+		job_name_analyzer = JobNameMetadataAnalyzer(self.job_name_metadata_spec)
+		
+		job_name_metadata_map = job_name_analyzer.analyze(self.data['JOBNAME'])
+
+		if job_name_metadata_map is None:
+			return
+
+		expected_metadata_list = job_name_analyzer.get_expected_metadata()
+
+		for expected_metadata_name in expected_metadata_list:
+			if expected_metadata_name in job_name_metadata_map.keys():
+				value = job_name_metadata_map[expected_metadata_name]
+				if self.maximum_jobname_metadata_length is None or len(value) <= self.maximum_jobname_metadata_length:
+					self.data[expected_metadata_name] = job_name_metadata_map[expected_metadata_name]
+				else:
+					self.data[expected_metadata_name] = 'toolong'
+			else:
+				self.data[expected_metadata_name] = 'unknown'
+	
+	def _flatten_job_status(self):
+		# Flatten job status
+		job_status = self.data['JOB_STATUS']
+		self.data['JOB_STATUS.%s' % job_status] = 1
+		del self.data['JOB_STATUS']
+
+	def enrich_data(self):
+		"""
+		Adds derived data, based on existing data
+
+		"""
+		self._enrich_data_using_job_name()
+		self._flatten_job_status()
+
+	def read_job_runtime_filename(self):
+		"""
+		Read the hadoop job runtime file. 
+		NOTE: In order to support multi-line fields, we use a trick here - We write 
+		      the file to a temp file, translating = chars to spaces, and then read
+		      the file as a space delimited csv.
+		TODO: Make this part multi-thread safe, so we can make things parallel in the future
+		"""
+		f = file(self.job_runtime_filename,'rb')
+                temp_file = file('/var/tmp/job-runtime-file.tmp',"wb")
+                while 1:
+                        buf = f.read(16384)
+			buf = buf.replace("="," ")
+                        if not buf:
+                                break
+                        temp_file.write(buf)
+                temp_file.close()
+                f.close()
+
+                f = file('/var/tmp/job-runtime-file.tmp',"rb")
+
+		self.data = {}
+		reader = csv.reader(f,delimiter=' ',quotechar='"')
+		for line in reader:
+			if len(line) == 0:
+				continue
+			if line[0] == 'Job':
+				line = line[1:]
+				m = dict(zip(line[0::2],line[1::2]))
+				self.data.update(m)
+
+	def __str__(self):
+		return str(self.data)
+	__repr__ = __str__
+		
+		
+class JobConfFile(object):
+	"""
+	Encapsulates the parsing and data of a job conf file
+	"""
+	def __init__(self,job_conf_filename):
+		self.job_conf_filename = job_conf_filename
+		self.jt = None
+		self.jt_start_ts = None
+		self.job_ts = None
+		self.job_number = None
+		self.properties = {}
+		self.data = {}
+		self.analyze()
+
+	def analyze(self):
+		self.data = {}
+
+		base_name = os.path.split(self.job_conf_filename)[1]
+		self.jt,self.jt_start_ts,_,self.job_ts,self.job_number,_ = base_name.split("_",5)
+		self.job_id = "job_%s_%s" % (self.job_ts,self.job_number)
+
+		self.data['JOB_ID'] = self.job_id
+		self.data['JOB_TRACKER_START_TIME'] = self.jt_start_ts
+		self.data['JOB_NUMBER'] = self.job_number
+
+		from xml.dom.minidom import parse
+		doc = parse(self.job_conf_filename)
+		properties = [p for p in doc.firstChild.childNodes if p.nodeName == 'property']
+		for prop in properties:
+			key = [x for x in prop.childNodes if x.nodeName == 'name'][0].firstChild.nodeValue
+			value = [x for x in prop.childNodes if x.nodeName == 'value'][0].firstChild.nodeValue
+			self.properties[key] = value
+
+		if 'mapreduce.job.submithost' in self.properties:
+			self.data['SOURCE_HOST'] = self.properties['mapreduce.job.submithost'].replace(".","_")
+		else:
+			self.data['SOURCE_HOST'] = 'unknown-host'
+
+
+	def __str__(self):
+		return "job_id=%s,jt=%s,jt_start_ts=%s,job_ts=%s,job_number=%s,data=%s" % (self.job_id,self.jt,self.jt_start_ts,self.job_ts,self.job_number,self.data)
+	__repr__ = __str__
+
+
+class JobHistoryProvider(object):
+	"""
+	A provider for the job history files. Use the generator job_history() to get pairs of job conf 
+	and job runtime file names
+
+	TODO: Add support for CDH4 folder structure (by finding recursively)
+	"""
+	def __init__(self,history_folder):
+		self.history_folder = history_folder
+		self.conf_filenames = glob.glob('%s/*_conf.xml' % self.history_folder)
+
+	def job_history_length(self):
+		return len(self.conf_filenames)
+
+	def job_history(self):
+		for conf_filename in self.conf_filenames:
+			both_filenames = glob.glob('%s*' % conf_filename[:-len('_conf.xml')])
+
+			runtime_filename = filter(lambda x : '_conf.xml' not in x,both_filenames)[0]
+
+			yield (conf_filename,runtime_filename)
+
+class Projection(object):
+	"""
+	A projection is one specific "group by" of raw data, in this case job data.
+
+	Each projection is a map: { time_bucket -> { projection_key -> { metric -> value } } }
+
+	time_bucket_field signifies the field name which includes the time_bucket value
+	spec is a tuple with the names of fields to project by (e.g. the keys of projection_keys)
+	"""
+	def __init__(self,spec,relaxed=True):
+		self.spec = spec
+		self.projection = {}
+		self.relaxed = relaxed
+
+	def __str__(self):
+		return "<spec=%s>" % str(self.spec)
+	__repr__ = __str__
+
+	def generate_projection_key(self,spec,data):
+		"""
+		Generate the projection key for data
+		"""
+		k = []
+		for field in spec:
+			k.append(data[field])
+		return tuple(k)
+
+	def remove_unneeded_values(self,data):
+		"""
+		Removes all non-value jobs and all time values from data.
+
+		composite values should have been flattened by now, and time values are not really worth aggregating.
+		enrich_data should have converted absolute times to durations at that point
+		"""
+		self.new_data = {}
+		for k,v in data.iteritems():
+			try:
+				# Make sure it's a number
+				tmp = float(v)
+				# Remove all absolute time data
+				if '_TIME' not in k and k != 'TIME_BUCKET':
+					self.new_data[k] = v
+			except:
+				pass
+		return self.new_data
+
+	def merge_values(self,time_bucket,projection_key,clean_data):
+		"""
+		Aggregates new data with existing data. Currently only summation is supported
+
+		TODO: Possibly support other types of aggregations. Not sure it's needed, though
+		"""	
+		m = self.projection[time_bucket][projection_key]
+		for k,v in clean_data.iteritems():
+			if not k in m:
+				m[k] = v
+			else:
+				# Only sum is supported for now
+				m[k] = m[k] + v
+		
+	def add_data(self,data):
+		"""
+		Add new data to the projection
+		"""
+		try:
+			time_bucket = data['TIME_BUCKET']
+			projection_key = self.generate_projection_key(self.spec,data)
+		except Exception,e:
+			logging.error("Could not generate time bucket and projection key. spec=%s" % str(self.spec))
+			if self.relaxed:
+				logging.warning("Non strict mode. Skipping job %s" % data['JOB_ID'])
+				return
+			else:
+				raise e
+				
+		# if it's a new time bucket
+		if time_bucket not in self.projection:
+			# Create the bucket
+			self.projection[time_bucket] = {}
+		# If it's a new projection key
+		if projection_key not in self.projection[time_bucket]:
+			# Create the projection key
+			self.projection[time_bucket][projection_key] = {}
+
+		# Clean the data
+		clean_data = self.remove_unneeded_values(data)
+
+		# and merge the new data with existing values
+		self.merge_values(time_bucket,projection_key,clean_data)
+
+	def normalize(self,metric):
+		"""
+		Remove special characters from the metric name
+		"""
+		return str(metric).strip().replace("$","__").replace(",","_")
+
+	def fetch_projection_values(self,prefix):
+		"""
+		Returns a list of tuples (metric_name,metric_value,metric_time_bucket), which contain 
+		the values of the projection.
+
+		prefix is prepended to all metric names
+		"""
+		projection_spec_str = self.normalize("_".join(self.spec))
+		values = []
+		for time_bucket,v1 in self.projection.iteritems():
+			for projection_key,v2 in v1.iteritems():
+				projection_key_str = self.normalize("_".join([self.normalize(x) for x in projection_key]))
+				for metric,value in v2.iteritems():
+					metric = self.normalize(metric)
+					metric_name = '%(prefix)s%(projection_spec_str)s.%(projection_key_str)s.%(metric)s.value' % vars()
+					metric_value = value
+					metric_time_bucket = time_bucket
+					values.append((metric_name,metric_value,metric_time_bucket))
+
+		return values
+
+class HadoopJobParser(object):
+	"""
+	Parses job files in order to provide job metadata
+	"""
+	def __init__(self,history_folder,time_bucket_field,time_bucket_interval,job_name_metadata_regexp,maximum_jobname_metadata_length,relaxed):
+		self.history_folder = history_folder
+		self.time_bucket_field = time_bucket_field
+		self.time_bucket_interval = time_bucket_interval
+		self.job_name_metadata_regexp = job_name_metadata_regexp
+		self.maximum_jobname_metadata_length = maximum_jobname_metadata_length
+		self.relaxed = relaxed
+		self.jobs = []
+
+	def parse(self):
+		self.jobs = []
+		jhp = JobHistoryProvider(self.history_folder)
+		for i,jh in enumerate(jhp.job_history()):
+			conf_filename,runtime_filename = jh
+			try:
+				if i % 10 == 0:
+					logging.info("Handling file %d out of %d " % (i,jhp.job_history_length()))
+				j = Job(conf_filename,runtime_filename,self.time_bucket_field,self.time_bucket_interval,self.job_name_metadata_regexp,self.maximum_jobname_metadata_length)
+	
+				self.jobs.append(j)
+			except Exception,e:
+				if self.relaxed:
+					logging.error("Exception while handling files %s,%s. Relaxed mode, continuing to next job file" % (conf_filename,runtime_filename))
+				else:
+					logging.error("Exception while handlnig files %s,%s. Stopping. Consider relaxed mode if needed. %s" % (conf_filename,runtime_filename,traceback.format_exc()))
+					raise
+		logging.info("Done handling files")
+
+	def get_available_fields(self,sample_count=3):
+		# get all available fields
+		field_names = set([])
+		for job in self.jobs:
+			field_names = field_names.union(job.data.keys())
+
+		m = {}
+		for field_name in field_names:
+			l = range(len(self.jobs))
+			random.shuffle(l)
+			sample_positions = l[:sample_count]
+			samples = []
+			for pos in sample_positions:
+				sample_data = self.jobs[pos].data
+				if not field_name in sample_data.keys():
+					samples.append('<non-existent>')
+				else:
+					samples.append(sample_data[field_name])
+
+			m[field_name] = samples
+
+		return m
+		
+	
+class HadoopJobDataProjector(object):
+	def __init__(self,jobs,projection_specs,relaxed):
+		self.jobs = jobs
+		self.relaxed = relaxed
+		self.projection_specs = projection_specs
+
+	def project(self):
+		self.projections = []
+		for spec in self.projection_specs:
+			logging.info("Creating projection %d spec=%s" % (len(self.projections),spec))
+			p = Projection(spec,self.relaxed)
+			self.projections.append(p)
+		
+		for i,job in enumerate(self.jobs):
+			logging.info("Handling file %d for all projections" % i)
+			for proj in self.projections:
+				proj.add_data(job.data)
+
+class HadoopJobMetricsSender(object):
+	"""
+	Sends projects as metrics to some metrics-client
+	"""
+	def __init__(self,projections,metric_client,metric_client_params,metric_name_prefix):
+		self.projections = projections
+		self.metric_client = metric_client
+		self.metric_client_params = metric_client_params
+		self.metric_name_prefix = self.materialize_prefix(metric_name_prefix)
+
+	def materialize_prefix(self,metric_name_prefix):
+		"""
+		Convert prefix template to actual prefix.
+
+		TODO: More general approach. Currently only handling reverse hostnames
+		"""
+		os_hostname = os.uname()[1]
+		if '.' in os_hostname:
+			name,domain = HOSTNAME.split("\\.",1)
+			domain = domain.replace(".","_")
+			HOSTNAME = "%s.%s" % (doman,name)
+		else:
+			HOSTNAME = 'unknown-domain.%s' % os_hostname
+
+		result = metric_name_prefix.replace("${HOSTNAME}",HOSTNAME)
+		
+		if len(result) > 0 and result[-1] != '.':
+			result = result + "."
+
+		return result
+
+	def send(self):
+		self._send_using_metric_client()
+
+	def _send_using_metric_client(self):
+		self.metric_client.initialize(self.metric_client_params)
+		# For each projection
+		for proj in self.projections:
+			self.metric_client.projection_started(proj)
+			# Fetch all the metrics for that projection
+			metrics = proj.fetch_projection_values(self.metric_name_prefix)
+
+			logging.info("Sending %d metrics for projection %s" % (len(metrics),proj))
+			for metric in metrics:
+				self.metric_client.add_metric(proj,metric[0],'%4.3f' % metric[1],int(metric[2]))
+			logging.info("Done Sending %d metrics for projection %s" % (len(metrics),proj))
+
+			self.metric_client.projection_finished(proj)
+
+		self.metric_client.done()
+	
+def setup_logging():
+	FORMAT = '%(asctime)-15s %(levelname)s %(message)s'
+
+	log_folder = os.path.join(os.path.split(sys.argv[0])[0],'logs')
+	if not os.path.exists(log_folder):
+		os.makedirs(log_folder)
+	log_filename = os.path.join(os.path.split(sys.argv[0])[0],'logs','hadoop-job-analyzer.log')
+	logger = logging.getLogger()
+	logger.setLevel(logging.INFO)
+	handler = logging.handlers.RotatingFileHandler(log_filename,maxBytes=20000000,backupCount=5)
+	handler.setFormatter(logging.Formatter(FORMAT))
+	logger.addHandler(handler)
+
+def show_error_and_exit(msg,error_code=1,show_help=True):
+	logging.error(msg)
+	print >>sys.stderr,msg
+	if show_help:
+		parser.print_help()
+	sys.exit(error_code)
+
+def list_available_fields(hadoop_job_parser,sample_count):
+	field_data = hadoop_job_parser.get_available_fields(sample_count)
+	for k,v in field_data.iteritems():
+		if len(v) == 0:
+			print k
+		else:
+			print k
+			for sample in v:
+				print "  --> %s" % sample
+
+if __name__ == '__main__':
+	setup_logging()
+
+	parser = OptionParser()
+	parser.add_option("-f","--history-folder",dest="history_folder",default=None,
+	                help="Location of jobtracker history/done folder")
+	parser.add_option("-p","--projection-specs",dest="projection_specs",default='USER',
+	                help="List of required projection specs. Each spec is in the format <FIELD1>.<FIELD2>... Specs are separated by commas")
+	parser.add_option("-t","--time-bucket-field",dest="time_bucket_field",default='SUBMIT_TIME',
+	                help="Name of field which will be used to associate a job with a time bucket and to perform aggregation over time. The default should rarely be changed")
+	parser.add_option("-i","--time-bucket-interval",dest="time_bucket_interval",default="60",
+	                help="Required time interval for aggregation")
+	parser.add_option("-j","--job-name-metadata-regexp",dest="job_name_metadata_regexp",default=None,
+	                help="Regexp with named groups for extracting additional data from the job names. Each named group will create matching data for each job, allowing to perform projections on it")
+	parser.add_option("-m","--maximum-job-name-metadata-length",dest="maximum_jobname_metadata_length",default=50,
+	                help="Maximum length of extracted job metadata to use - If a named group from -j is above this threshold, it will be written as 'toolong' instead of its actual value. This is a safety mechanism against cluttering the metrics for non compliant job names")
+	parser.add_option("-n","--metric-name-prefix",dest="metric_name_prefix",default=None,
+	                help="Prefix for all metrics. You can add ${HOSTNAME} in the prefix and it will be replaced with 'domain.hostname'. E.g. data.hadoop.jobtracker.${HOSTNAME} . Note that you'd need to use single quotes in the command line so the $ sign will not be parsed by the shell")
+	parser.add_option("-C","--metric-client-type",dest="metric_client_type",default=None,
+	                help="Type of metric client. currently supported types are 'stdout' and 'graphite'. The 'graphite' type requires the following client params (-P): 'host=X,port=Y'")
+	parser.add_option("-P","--metric-client-params",dest="metric_client_params",default=None,
+	                help="Comma separated list of parameters in the format x=y. Will be passed to the metric client")
+	parser.add_option("-r","--relaxed",dest="relaxed",default=False,action="store_true",
+	                help="Relaxed mode. If set, missing fields in a job would cause the system to continue analyzing the next ones")
+	parser.add_option("-l","--list-available-fields",dest="should_list_available_fields",default=False,action="store_true",
+	                help="Using this flag will provide all the field names available by scanning the currently existing jobs")
+	parser.add_option("-s","--sample-count",dest="sample_count",default=3,
+	                help="Number of samples to provide when using the -l list flag")
+
+	(options,args) = parser.parse_args()
+
+	if options.history_folder is None:
+		show_error_and_exit("History folder must be provided")
+		
+	if not os.path.exists(options.history_folder):
+		show_error_and_exit("History folder %s does not exist" % options.history_folder)
+
+	history_folder = options.history_folder
+
+	should_list_available_fields = options.should_list_available_fields
+	sample_count = int(options.sample_count)
+
+	if options.projection_specs is None and not should_list_available_fields:
+		show_error_and_exit("At least one projection spec needs to be provided")
+
+	projection_specs = [tuple(spec.split("/")) for spec in options.projection_specs.split(",")]
+	time_bucket_field = options.time_bucket_field
+
+	job_name_metadata_regexp = options.job_name_metadata_regexp
+	maximum_jobname_metadata_length = options.maximum_jobname_metadata_length
+
+	if options.metric_name_prefix is None and not should_list_available_fields:
+		show_error_and_exit("Metric name prefix needs to be provided")
+
+	metric_name_prefix = options.metric_name_prefix
+
+	if options.metric_client_type is None and not should_list_available_fields:
+		show_error_and_exit("Metric client type must be provided")
+
+	metric_client_module_name = 'hja-%s' % options.metric_client_type
+
+	if options.metric_client_params is not None:
+		metric_client_params = dict([p.split("=",1) for p in options.metric_client_params.split(",")])
+	else:
+		metric_client_params = {}
+
+	try:
+		time_bucket_interval = float(options.time_bucket_interval)
+	except:
+		show_error_and_exit("time bucket interval must be a number")
+
+	if not should_list_available_fields:
+		if not os.path.exists('%s.py' % metric_client_module_name):
+			show_error_and_exit("Unrecognized metric client type %s. cannot find %s" % (options.metric_client_type,metric_client_module_name))
+		else:
+			try:
+				sys.path.append('.')
+				metric_client = __import__(metric_client_module_name)
+				logging.info("Using metric client %s" % options.metric_client_type)
+			except:
+				show_error_and_exit("Could not load metric client %s. module name %s not found. Traceback %s" % (options.metric_client_type,metric_client_module_name,traceback.format_exc()))
+
+	relaxed = options.relaxed
+
+	# Main logic starts here
+	try:
+		start_time = time.time()
+
+		# Parse the job data
+		logging.info("Parsing job files")
+		parser = HadoopJobParser(history_folder,time_bucket_field,time_bucket_interval,job_name_metadata_regexp,maximum_jobname_metadata_length,relaxed)
+		parser.parse()
+
+		# If list has been requested, just spit it out and exit
+		if should_list_available_fields:
+			list_available_fields(parser,sample_count)
+			sys.exit(0)
+	
+		# Perform aggregations
+		logging.info("Performing Aggregations")
+		projector = HadoopJobDataProjector(parser.jobs,projection_specs,relaxed)
+		projector.project()
+
+		# Send as metrics
+		logging.info("Sending metrics")
+		metrics_sender = HadoopJobMetricsSender(projector.projections,metric_client,metric_client_params,metric_name_prefix)
+		metrics_sender.send()
+
+		logging.info("Done. Total time taken is %4.3f seconds" % (time.time() - start_time))
+	except Exception,e:
+		logging.fatal("FAILED. Total time taken is %4.3f seconds" % (time.time() - start_time))
+		show_error_and_exit("There was an error during job analysis. Consider using relaxed flag if needed. %s" % traceback.format_exc(),error_code=100,show_help=False)
+
+
+
+
