@@ -356,7 +356,10 @@ class Projection(object):
 		"""
 		k = []
 		for field in spec:
-			k.append(data[field])
+			if field in data.keys():
+				k.append(data[field])
+			else:
+				k.append('value-unknown')
 		return tuple(k)
 
 	def remove_unneeded_values(self,data):
@@ -426,7 +429,10 @@ class Projection(object):
 		"""
 		Remove special characters from the metric name
 		"""
-		return str(metric).strip().replace("$","__").replace(",","_")
+		if metric is None or str(metric).strip() == '':
+			return "empty-value"
+		else:
+			return str(metric).strip().replace("$","__").replace(",","_")
 
 	def fetch_projection_values(self,prefix):
 		"""
@@ -541,9 +547,9 @@ class HadoopJobMetricsSender(object):
 		"""
 		os_hostname = os.uname()[1]
 		if '.' in os_hostname:
-			name,domain = HOSTNAME.split("\\.",1)
+			name,domain = os_hostname.split("\\.",1)
 			domain = domain.replace(".","_")
-			HOSTNAME = "%s.%s" % (doman,name)
+			HOSTNAME = "%s.%s" % (domain,name)
 		else:
 			HOSTNAME = 'unknown-domain.%s' % os_hostname
 
@@ -675,12 +681,13 @@ if __name__ == '__main__':
 	except:
 		show_error_and_exit("time bucket interval must be a number")
 
+	code_path = os.path.split(sys.argv[0])[0]
 	if not should_list_available_fields:
-		if not os.path.exists('%s.py' % metric_client_module_name):
+		if not os.path.exists('%s/%s.py' % (code_path,metric_client_module_name)):
 			show_error_and_exit("Unrecognized metric client type %s. cannot find %s" % (options.metric_client_type,metric_client_module_name))
 		else:
 			try:
-				sys.path.append('.')
+				sys.path.append(code_path)
 				metric_client = __import__(metric_client_module_name)
 				logging.info("Using metric client %s" % options.metric_client_type)
 			except:
