@@ -547,7 +547,7 @@ class HadoopJobMetricsSender(object):
 		"""
 		os_hostname = os.uname()[1]
 		if '.' in os_hostname:
-			name,domain = os_hostname.split("\\.",1)
+			name,domain = os_hostname.split(".",1)
 			domain = domain.replace(".","_")
 			HOSTNAME = "%s.%s" % (domain,name)
 		else:
