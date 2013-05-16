@@ -211,6 +211,8 @@ Note that this doesn't affect the stdout metric plugin, which writes directly to
 
 * Currently, all aggregation are sum() aggregation. If needed, aggregation types will be added, possibly by providing a `.AVG`, `.SUM` versions of the metrics.
 
+* The job name metadata extraction currently uses one regexp for all values. This means that it either finds all of the named groups or it doesn't find any of them. This can cause issues in non compliant job names. This will probably change in the future to multiple independent regexps.
+
 ## Examples General Note
 Please note that the basis for the examples in the example folders is based on real job files, but was modified in order not to expose any business related data.
 
