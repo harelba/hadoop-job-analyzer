@@ -700,19 +700,18 @@ if __name__ == '__main__':
 		# If list has been requested, just spit it out and exit
 		if should_list_available_fields:
 			list_available_fields(parser,sample_count)
-			sys.exit(0)
-	
-		# Perform aggregations
-		logging.info("Performing Aggregations")
-		projector = HadoopJobDataProjector(parser.jobs,projection_specs,relaxed)
-		projector.project()
+		else:
+			# Perform aggregations
+			logging.info("Performing Aggregations")
+			projector = HadoopJobDataProjector(parser.jobs,projection_specs,relaxed)
+			projector.project()
 
-		# Send as metrics
-		logging.info("Sending metrics")
-		metrics_sender = HadoopJobMetricsSender(projector.projections,metric_client,metric_client_params,metric_name_prefix)
-		metrics_sender.send()
+			# Send as metrics
+			logging.info("Sending metrics")
+			metrics_sender = HadoopJobMetricsSender(projector.projections,metric_client,metric_client_params,metric_name_prefix)
+			metrics_sender.send()
 
-		logging.info("Done. Total time taken is %4.3f seconds" % (time.time() - start_time))
+			logging.info("Done. Total time taken is %4.3f seconds" % (time.time() - start_time))
 	except Exception,e:
 		logging.fatal("FAILED. Total time taken is %4.3f seconds" % (time.time() - start_time))
 		show_error_and_exit("There was an error during job analysis. Consider using relaxed flag if needed. %s" % traceback.format_exc(),error_code=100,show_help=False)
