@@ -36,6 +36,8 @@ A [Graphitus](https://github.com/erezmazor/graphitus) dashboard for the metrics 
 
 To use the graphitus dashboard, just copy the dashboard to your dashboard repository and replace the metric name prefix to your prefix in the dashboard json file.
 
+The example graphs above were done with the help of graphitus.
+
 ## Usage
 Just get the source files to your job tracker, and run ./hadoop-job-analyzer with the proper parameters using cron or any periodic scheduler.
 
