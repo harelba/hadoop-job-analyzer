@@ -24,6 +24,7 @@ import traceback
 import logging
 import logging.handlers
 import random
+import fnmatch
 
 class CounterGroup(object):
 	"""
@@ -81,26 +82,25 @@ class Counters(object):
 	__repr__ = __str__
 
 class JobNameMetadataAnalyzer(object):
-	def __init__(self,regexp):
-		self.regexp = regexp
-		self.p = re.compile(regexp)
-
-	def get_expected_metadata(self):
-		return self.p.groupindex.keys()
+	def __init__(self,separator):
+		self.separator = separator
 
 	def analyze(self,jobname):
-		m = self.p.search(jobname)
-		if m is not None:
-			return m.groupdict()
-		else:
+		try:
+			pairs = jobname.split(self.separator)
+			# Part of the trick described below... We translated all = signs to spaces, so we're looking for a space here and not an equal sign
+			keyvalues = [tuple(pair.split(" ",1)) for pair in pairs]
+			return dict(keyvalues)
+		except:
+			print traceback.format_exc()
 			return None
 
 class Job(object):
-	def __init__(self,conf_filename,runtime_filename,time_bucket_field,time_bucket_interval,job_name_metadata_regexp,maximum_jobname_metadata_length):
+	def __init__(self,conf_filename,runtime_filename,time_bucket_field,time_bucket_interval,mapped_job_name_metadata,mapped_job_name_separator,maximum_jobname_metadata_length):
 		self.time_bucket_field = time_bucket_field
 		self.time_bucket_interval = time_bucket_interval
 		self.c = JobConfFile(conf_filename)
-		self.r = JobRuntimeFile(runtime_filename,job_name_metadata_regexp,maximum_jobname_metadata_length)
+		self.r = JobRuntimeFile(runtime_filename,mapped_job_name_metadata,mapped_job_name_separator,maximum_jobname_metadata_length)
 		self.data = {}
 		self.analyze()
 
@@ -154,9 +154,10 @@ class JobRuntimeFile(object):
 	"""
 	Encapsulates the parsing and data of a hadoop job runtime file
 	"""
-	def __init__(self,job_runtime_filename,job_name_metadata_spec,maximum_jobname_metadata_length):
+	def __init__(self,job_runtime_filename,mapped_job_name_metadata,mapped_job_name_seperator,maximum_jobname_metadata_length):
 		self.job_runtime_filename = job_runtime_filename
-		self.job_name_metadata_spec = job_name_metadata_spec
+		self.mapped_job_name_metadata = mapped_job_name_metadata
+		self.mapped_job_name_separator = mapped_job_name_separator
 		self.maximum_jobname_metadata_length = maximum_jobname_metadata_length
 		self.data = {}
 		self.read_job_runtime_filename()
@@ -194,28 +195,22 @@ class JobRuntimeFile(object):
 		self.data.update(counters)
 				
 	def _enrich_data_using_job_name(self):
-		if self.job_name_metadata_spec is None:
+		if not self.mapped_job_name_metadata:
 			return
 
-		job_name_analyzer = JobNameMetadataAnalyzer(self.job_name_metadata_spec)
+		job_name_analyzer = JobNameMetadataAnalyzer(self.mapped_job_name_separator)
 		
 		job_name_metadata_map = job_name_analyzer.analyze(self.data['JOBNAME'])
 
 		if job_name_metadata_map is None:
 			return
 
-		expected_metadata_list = job_name_analyzer.get_expected_metadata()
-
-		for expected_metadata_name in expected_metadata_list:
-			if expected_metadata_name in job_name_metadata_map.keys():
-				value = job_name_metadata_map[expected_metadata_name]
-				if self.maximum_jobname_metadata_length is None or len(value) <= self.maximum_jobname_metadata_length:
-					self.data[expected_metadata_name] = job_name_metadata_map[expected_metadata_name]
-				else:
-					self.data[expected_metadata_name] = 'toolong'
+		for k,v in job_name_metadata_map.iteritems():
+			if self.maximum_jobname_metadata_length is None or len(v) <= self.maximum_jobname_metadata_length:
+				self.data[k] = v
 			else:
-				self.data[expected_metadata_name] = 'unknown'
-	
+				self.data[k] = 'toolong'
+
 	def _flatten_job_status(self):
 		# Flatten job status
 		job_status = self.data['JOB_STATUS']
@@ -266,6 +261,21 @@ class JobRuntimeFile(object):
 	__repr__ = __str__
 		
 		
+class JobConfFilename(object):
+	def __init__(self,job_conf_filename):
+		self.job_conf_filename = job_conf_filename
+		self.jt = None
+		self.jt_start_ts = None
+		self.job_ts = None
+		self.job_number = None
+		self.analyze_filename()
+
+	def analyze_filename(self):
+		base_name = os.path.split(self.job_conf_filename)[1]
+		self.jt,self.jt_start_ts,_,self.job_ts,self.job_number,_ = base_name.split("_",5)
+		self.job_id = "job_%s_%s" % (self.job_ts,self.job_number)
+
+		
 class JobConfFile(object):
 	"""
 	Encapsulates the parsing and data of a job conf file
@@ -283,13 +293,11 @@ class JobConfFile(object):
 	def analyze(self):
 		self.data = {}
 
-		base_name = os.path.split(self.job_conf_filename)[1]
-		self.jt,self.jt_start_ts,_,self.job_ts,self.job_number,_ = base_name.split("_",5)
-		self.job_id = "job_%s_%s" % (self.job_ts,self.job_number)
-
-		self.data['JOB_ID'] = self.job_id
-		self.data['JOB_TRACKER_START_TIME'] = self.jt_start_ts
-		self.data['JOB_NUMBER'] = self.job_number
+		# Add filename information as fields
+		jcf = JobConfFilename(self.job_conf_filename)
+		self.data['JOB_ID'] = jcf.job_id
+		self.data['JOB_TRACKER_START_TIME'] = jcf.jt_start_ts
+		self.data['JOB_NUMBER'] = jcf.job_number
 
 		from xml.dom.minidom import parse
 		doc = parse(self.job_conf_filename)
@@ -312,25 +320,46 @@ class JobConfFile(object):
 
 class JobHistoryProvider(object):
 	"""
-	A provider for the job history files. Use the generator job_history() to get pairs of job conf 
-	and job runtime file names
+	A provider for the job history files. Iterate over job_history() in order to get conf,runtime job filename pairs
 
-	TODO: Add support for CDH4 folder structure (by finding recursively)
 	"""
-	def __init__(self,history_folder):
+	def __init__(self,history_folder,relaxed=True,conf_filename_postfix='_conf.xml'):
 		self.history_folder = history_folder
-		self.conf_filenames = glob.glob('%s/*_conf.xml' % self.history_folder)
+		self.conf_filename_postfix = conf_filename_postfix
+		self.pairs = []
+		self.relaxed = relaxed
+		self.analyze()
 
+	def analyze(self):
+		conf_filenames = []
+		runtime_filenames = []
+		# Collect all conf/runtime files from the disk recursively (CDH4 has the data partitioned in multiple folders)
+		for root,dirnames,filenames in os.walk(self.history_folder):
+			for filename in filenames:
+				if fnmatch.fnmatch(filename,'*%s' % self.conf_filename_postfix):
+					conf_filenames.append('%s/%s' % (root,filename))
+				elif not fnmatch.fnmatch(filename,'*.crc'):
+					runtime_filenames.append('%s/%s' % (root,filename))
+		# Now go over all conf file names and find a matching runtime file for each. This is hardly "efficient" since it's
+		# in O(n^2), but it provides for a more robust behvaior, less prone to hadoop version differences etc (and partically
+		# It's not a big deal performance wise)
+		for conf_filename in conf_filenames:
+			jcf = JobConfFilename(conf_filename)
+			job_id = jcf.job_id
+			matching_runtime_files = filter(lambda fn: job_id in fn,runtime_filenames)
+			if len(matching_runtime_files) != 0:
+				self.pairs.append((conf_filename,matching_runtime_files[0]))
+			else:
+				logging.error('Could not find matching runtime file for conf file %s' % conf_filename)
+				if not relaxed:
+					raise Exception('Could not find matching runtime file for conf file %s' % conf_filename)
+		
 	def job_history_length(self):
-		return len(self.conf_filenames)
+		return len(self.pairs)
 
 	def job_history(self):
-		for conf_filename in self.conf_filenames:
-			both_filenames = glob.glob('%s*' % conf_filename[:-len('_conf.xml')])
-
-			runtime_filename = filter(lambda x : '_conf.xml' not in x,both_filenames)[0]
-
-			yield (conf_filename,runtime_filename)
+		for pair in self.pairs:
+			yield pair
 
 class Projection(object):
 	"""
@@ -459,24 +488,25 @@ class HadoopJobParser(object):
 	"""
 	Parses job files in order to provide job metadata
 	"""
-	def __init__(self,history_folder,time_bucket_field,time_bucket_interval,job_name_metadata_regexp,maximum_jobname_metadata_length,relaxed):
+	def __init__(self,history_folder,time_bucket_field,time_bucket_interval,mapped_job_name_metadata,mapped_job_name_separator,maximum_jobname_metadata_length,relaxed):
 		self.history_folder = history_folder
 		self.time_bucket_field = time_bucket_field
 		self.time_bucket_interval = time_bucket_interval
-		self.job_name_metadata_regexp = job_name_metadata_regexp
+		self.mapped_job_name_metadata = mapped_job_name_metadata
+		self.mapped_job_name_separator = mapped_job_name_separator
 		self.maximum_jobname_metadata_length = maximum_jobname_metadata_length
 		self.relaxed = relaxed
 		self.jobs = []
 
 	def parse(self):
 		self.jobs = []
-		jhp = JobHistoryProvider(self.history_folder)
+		jhp = JobHistoryProvider(self.history_folder,self.relaxed)
 		for i,jh in enumerate(jhp.job_history()):
 			conf_filename,runtime_filename = jh
 			try:
 				if i % 10 == 0:
 					logging.info("Handling file %d out of %d " % (i,jhp.job_history_length()))
-				j = Job(conf_filename,runtime_filename,self.time_bucket_field,self.time_bucket_interval,self.job_name_metadata_regexp,self.maximum_jobname_metadata_length)
+				j = Job(conf_filename,runtime_filename,self.time_bucket_field,self.time_bucket_interval,self.mapped_job_name_metadata,self.mapped_job_name_separator,self.maximum_jobname_metadata_length)
 	
 				self.jobs.append(j)
 			except Exception,e:
@@ -622,8 +652,12 @@ if __name__ == '__main__':
 	                help="Name of field which will be used to associate a job with a time bucket and to perform aggregation over time. The default should rarely be changed")
 	parser.add_option("-i","--time-bucket-interval",dest="time_bucket_interval",default="60",
 	                help="Required time interval for aggregation")
-	parser.add_option("-j","--job-name-metadata-regexp",dest="job_name_metadata_regexp",default=None,
-	                help="Regexp with named groups for extracting additional data from the job names. Each named group will create matching data for each job, allowing to perform projections on it")
+
+	parser.add_option("-M","--mapped-job-name-metadata",dest="mapped_job_name_metadata",default=False,action="store_true",
+	                help="If set, then job name will be treated as a map of key=value, separated by a separator that is set by -S. if -M is not set, job name will be ignored")
+	parser.add_option("-S","--mapped-job-name-separator",dest="mapped_job_name_separator",default="||",
+	                help="When -M is used, this parameter can be used to set the string that separates between key-value pairs. Default is ||")
+
 	parser.add_option("-m","--maximum-job-name-metadata-length",dest="maximum_jobname_metadata_length",default=50,
 	                help="Maximum length of extracted job metadata to use - If a named group from -j is above this threshold, it will be written as 'toolong' instead of its actual value. This is a safety mechanism against cluttering the metrics for non compliant job names")
 	parser.add_option("-n","--metric-name-prefix",dest="metric_name_prefix",default=None,
@@ -658,7 +692,9 @@ if __name__ == '__main__':
 	projection_specs = [tuple(spec.split("/")) for spec in options.projection_specs.split(",")]
 	time_bucket_field = options.time_bucket_field
 
-	job_name_metadata_regexp = options.job_name_metadata_regexp
+	mapped_job_name_metadata = options.mapped_job_name_metadata
+	mapped_job_name_separator = options.mapped_job_name_separator
+
 	maximum_jobname_metadata_length = options.maximum_jobname_metadata_length
 
 	if options.metric_name_prefix is None and not should_list_available_fields:
@@ -701,7 +737,7 @@ if __name__ == '__main__':
 
 		# Parse the job data
 		logging.info("Parsing job files")
-		parser = HadoopJobParser(history_folder,time_bucket_field,time_bucket_interval,job_name_metadata_regexp,maximum_jobname_metadata_length,relaxed)
+		parser = HadoopJobParser(history_folder,time_bucket_field,time_bucket_interval,mapped_job_name_metadata,mapped_job_name_separator,maximum_jobname_metadata_length,relaxed)
 		parser.parse()
 
 		# If list has been requested, just spit it out and exit

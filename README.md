@@ -49,7 +49,8 @@ The following parameters can be provided:
 #### Analysis related parameters
 * `-f` - The location of the jobtracker's `history/done` folder. Should be local or some mount to the jobtracker
 * `-l` - List all available fields, possibly with sample values from actual jobs. Use -s to control the number of samples
-* `-j` - A regexp allowing to dissect the job name for each job and extract fields from it. The regexp should be a pythonic named groups regexp. Each named group will automatically be available to other parts, as if it was part of the job's information. It will also participate in the output of the -l parameter. The parameter is not mandatory of course.
+* `-M` - When set, this job name will be analyzed as a map of key-values, separated by "||". Each key/value pair will automatically be available to other parts, as if it was part of the job's information. It will also participate in the output of the -l parameter. The parameter is not mandatory of course.
+* `-S` - This can be used to change the job name key-value separator (default is ||).
 * `-m` - Maximum length of job name metadata extracted using `-j`. Values longer than this value will be replaced with "toolong". This is a defense mechanism against clutter caused by non compliant job names.
 * `-r` - Relaxed mode. In this mode, non compliant jobs and missing fields will not cause the analysis to stop
 
@@ -141,35 +142,37 @@ In contrast to the stdout plugin, the graphite plugin requires parameters in ord
 Adding the `-P` parameter allows the plugin to use these parameter when initializing. Note that when running this command, no output will be written to the console (The metrics are sent to graphite).
 
 ### Extracting job metadata from the job name
-The tool provides a method for treating parts of the job name as metadata, adding more fields to each jobs. These "fields" can then be used for aggregation, projection etc.
+The tool provides a method for treating the job name as a provider for job metadata, adding more fields to each jobs. These "fields" can then be used for aggregation, projection etc.
 
-In order to treat the job name as metadata, use the `-j` parameter. This parameter accepts a [python regular expression](http://docs.python.org/2/library/re.html) that contains named groups. These named groups will automatically become fields in the job in case of a match (You'll be able to see them in the output of a `-l` command).
+In order to treat the job name as metadata, use the `-M` parameter. This will cause the tool to parse the job name for a map of key-values in the format "key=value||key=value||...". key-value pairs will automatically become fields in the job (You'll be able to see them in the output of a `-l` command, aggregate by them, etc.).
 
-For the sake of the example, let's assume that the job name is in the format "<team>:<algorithm>:<subalgorithm>", and we want the team and algorithm to participate in aggregations.
+Let's assume you've run the command as follows:
+		./hadoop-job-analyzer -f example-history-folder/ -n 'data.jobtracker.${HOSTNAME}' -C stdout -p SERVICE,DOMAIN,MYDATA -M
 
-		./hadoop-job-analyzer -f example-history-folder/ -n 'data.jobtracker.${HOSTNAME}' -C stdout -p TEAM,ALGORITHM,USER -j '^(?P<TEAM>.*?):(?P<ALGORITHM>.*?):'
+Notice that the `-p` parameter (projections required) uses SERVICE and DOMAIN as if they were standard fields of the job.
 
-A few notes about the command line:
+Now let's assume there are job names with the following values:
 
-* We're using single quotes around the `-j` parameter value, so the shell won't interpret the regexp in any way.  
-* The regexp contains named groups for naming the parts matches by the regexp. Python uses `(?P<name>...)` for named groups.
-* The regexp uses non-greedy wildcards on purpose - E.g. using `.*?` instead of `.*`. The greedy version would not provide us with what we need here.
-* The `-p` parameter (projections required) uses TEAM and ALGORITHM as if they were standard fields of the job
+	SERVICE=WWW||DOMAIN=calculationA||MYDATA=extrainfo||PRIORITY=1
+	SERVICE=PQQ||DOMAIN=calculationB||MYDATA=extrainfo||PRIORITY=1
+	SERVICE=PQQ||DOMAIN=calculationA||MYDATA=extrainfo||PRIORITY=2
+	...
+	SERVICE=PQQ||DOMAIN=calculationC||MYDATA=extrainfo||PRIORITY=1
 
 Running the same command with the `-l` parameter would give us the following (partial) output.
 
 		...
-		TEAM
+		SERVICE
 			--> PQQ
 			--> XPA
 			--> WWW
 		...
-		ALGORITHM
+		DOMAIN
 			--> calculationB
 			--> calculationB
 			--> calculationC
 
-In order to prevent cluttering of the metric namespace in cases where the job name is not compliant with the required format, the tool enforces a limit on the maximum length of a value extracted from the job name. If the extracted value is longer than the maximum, the value will be replaced by `toolong`. The limit can be easily changed using the `-m` parameter.
+In order to prevent cluttering of the metric namespace, the tool enforces a limit on the maximum length of a value extracted from the job name. If the extracted value is longer than the maximum, the value will be replaced by `toolong`. The limit can be easily changed using the `-m` parameter.
 
 ## Relaxed Mode
 By default, any analysis problem will cause the tool to stop its analysis and fail. Activating relaxed mode by adding the `-r` parameter will allow to continue processing the next jobs even in the face of errors. I would appreciate it if you sent me the job files in cases like that, if you think it's a bug in the tool itself.
