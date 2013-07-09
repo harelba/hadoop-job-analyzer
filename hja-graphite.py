@@ -28,16 +28,22 @@ def projection_started(proj):
 def projection_finished(proj):
 	pass
 
-def add_metric(proj,name,value,timestamp):
+def add_projection_metric(proj,name,value,timestamp):
+	add_metric(name,value,timestamp)
+
+def add_metric(name,value,timestamp):
 	global metrics_to_send
 	metrics_to_send.append((name,value,timestamp))
 
 def done():
-	global graphite_server,graphite_port
 	global metrics_to_send
+	_do_send(metrics_to_send)
+
+def _do_send(metrics_tuples):
+	global graphite_server,graphite_port
 
 	data_list = []
-	for name,value,timestamp in metrics_to_send:
+	for name,value,timestamp in metrics_tuples:
 		data = "%(name)s %(value)s %(timestamp)s" % vars()
 		data_list.append(data)
 
@@ -51,5 +57,3 @@ def done():
 	except Exception,e:
 		print >>sys.__stderr__,"Error trying to send metric data %s " % tb.format_exc()
 		logging.error("Error trying to send metric data %s " % tb.format_exc())
-    
-

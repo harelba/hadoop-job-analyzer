@@ -328,6 +328,7 @@ class JobHistoryProvider(object):
 		self.conf_filename_postfix = conf_filename_postfix
 		self.pairs = []
 		self.relaxed = relaxed
+		self.job_error_count = 0
 		self.analyze()
 
 	def analyze(self):
@@ -351,6 +352,7 @@ class JobHistoryProvider(object):
 				self.pairs.append((conf_filename,matching_runtime_files[0]))
 			else:
 				logging.error('Could not find matching runtime file for conf file %s' % conf_filename)
+				self.job_error_count += 1
 				if not relaxed:
 					raise Exception('Could not find matching runtime file for conf file %s' % conf_filename)
 		
@@ -498,9 +500,13 @@ class HadoopJobParser(object):
 		self.relaxed = relaxed
 		self.jobs = []
 
+		self.job_parsing_error_count = 0
+		self.job_history_error_count = 0
+
 	def parse(self):
 		self.jobs = []
 		jhp = JobHistoryProvider(self.history_folder,self.relaxed)
+		self.job_history_error_count = jhp.job_error_count
 		for i,jh in enumerate(jhp.job_history()):
 			conf_filename,runtime_filename = jh
 			try:
@@ -510,6 +516,7 @@ class HadoopJobParser(object):
 	
 				self.jobs.append(j)
 			except Exception,e:
+				self.job_parsing_error_count += 1
 				if self.relaxed:
 					logging.error("Exception while handling files %s,%s. Relaxed mode, continuing to next job file" % (conf_filename,runtime_filename))
 				else:
@@ -559,57 +566,53 @@ class HadoopJobDataProjector(object):
 			for proj in self.projections:
 				proj.add_data(job.data)
 
+def materialize_metric_name_prefix(metric_name_prefix):
+	"""
+	Convert prefix template to actual prefix.
+
+	TODO: More general approach. Currently only handling reverse hostnames
+	"""
+	os_hostname = os.uname()[1]
+	if '.' in os_hostname:
+		name,domain = os_hostname.split(".",1)
+		domain = domain.replace(".","_")
+		HOSTNAME = "%s.%s" % (domain,name)
+	else:
+		HOSTNAME = 'unknown-domain.%s' % os_hostname
+
+	result = metric_name_prefix.replace("${HOSTNAME}",HOSTNAME)
+	
+	if len(result) > 0 and result[-1] != '.':
+		result = result + "."
+
+	return result
+
 class HadoopJobMetricsSender(object):
 	"""
 	Sends projects as metrics to some metrics-client
 	"""
-	def __init__(self,projections,metric_client,metric_client_params,metric_name_prefix):
+	def __init__(self,projections,metric_client,metric_name_prefix):
 		self.projections = projections
 		self.metric_client = metric_client
-		self.metric_client_params = metric_client_params
-		self.metric_name_prefix = self.materialize_prefix(metric_name_prefix)
-
-	def materialize_prefix(self,metric_name_prefix):
-		"""
-		Convert prefix template to actual prefix.
-
-		TODO: More general approach. Currently only handling reverse hostnames
-		"""
-		os_hostname = os.uname()[1]
-		if '.' in os_hostname:
-			name,domain = os_hostname.split(".",1)
-			domain = domain.replace(".","_")
-			HOSTNAME = "%s.%s" % (domain,name)
-		else:
-			HOSTNAME = 'unknown-domain.%s' % os_hostname
-
-		result = metric_name_prefix.replace("${HOSTNAME}",HOSTNAME)
-		
-		if len(result) > 0 and result[-1] != '.':
-			result = result + "."
-
-		return result
+		self.metric_name_prefix = metric_name_prefix
 
 	def send(self):
 		self._send_using_metric_client()
 
 	def _send_using_metric_client(self):
-		self.metric_client.initialize(self.metric_client_params)
 		# For each projection
 		for proj in self.projections:
 			self.metric_client.projection_started(proj)
 			# Fetch all the metrics for that projection
-			metrics = proj.fetch_projection_values(self.metric_name_prefix)
+			metrics = proj.fetch_projection_values('%sprojections.' % self.metric_name_prefix)
 
 			logging.info("Sending %d metrics for projection %s" % (len(metrics),proj))
 			for metric in metrics:
-				self.metric_client.add_metric(proj,metric[0],'%4.3f' % metric[1],int(metric[2]))
+				self.metric_client.add_projection_metric(proj,metric[0],'%4.3f' % metric[1],int(metric[2]))
 			logging.info("Done Sending %d metrics for projection %s" % (len(metrics),proj))
 
 			self.metric_client.projection_finished(proj)
 
-		self.metric_client.done()
-	
 def setup_logging():
 	FORMAT = '%(asctime)-15s %(levelname)s %(message)s'
 
@@ -700,7 +703,7 @@ if __name__ == '__main__':
 	if options.metric_name_prefix is None and not should_list_available_fields:
 		show_error_and_exit("Metric name prefix needs to be provided")
 
-	metric_name_prefix = options.metric_name_prefix
+	metric_name_prefix = materialize_metric_name_prefix(options.metric_name_prefix)
 
 	if options.metric_client_type is None and not should_list_available_fields:
 		show_error_and_exit("Metric client type must be provided")
@@ -726,6 +729,8 @@ if __name__ == '__main__':
 				sys.path.append(code_path)
 				metric_client = __import__(metric_client_module_name)
 				logging.info("Using metric client %s" % options.metric_client_type)
+				metric_client.initialize(metric_client_params)
+				logging.info("Metric client intiialized with params %s" % str(metric_client_params))
 			except:
 				show_error_and_exit("Could not load metric client %s. module name %s not found. Traceback %s" % (options.metric_client_type,metric_client_module_name,traceback.format_exc()))
 
@@ -751,10 +756,17 @@ if __name__ == '__main__':
 
 			# Send as metrics
 			logging.info("Sending metrics")
-			metrics_sender = HadoopJobMetricsSender(projector.projections,metric_client,metric_client_params,metric_name_prefix)
+			metrics_sender = HadoopJobMetricsSender(projector.projections,metric_client,metric_name_prefix)
 			metrics_sender.send()
 
-			logging.info("Done. Total time taken is %4.3f seconds" % (time.time() - start_time))
+			total_time = time.time() - start_time
+			metric_client.add_metric('%sstats.total_time' % metric_name_prefix,total_time,start_time)
+			metric_client.add_metric('%sstats.job_parsing_error_count' % metric_name_prefix,parser.job_parsing_error_count,start_time)
+			metric_client.add_metric('%sstats.job_history_error_count' % metric_name_prefix,parser.job_history_error_count,start_time)
+
+			metric_client.done()
+
+			logging.info("Done. Total time taken is %4.3f seconds. There have been %d job parsing errors" % (total_time,parser.job_parsing_error_count))
 	except Exception,e:
 		logging.fatal("FAILED. Total time taken is %4.3f seconds" % (time.time() - start_time))
 		show_error_and_exit("There was an error during job analysis. Consider using relaxed flag if needed. %s" % traceback.format_exc(),error_code=100,show_help=False)
