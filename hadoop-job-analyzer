@@ -90,9 +90,10 @@ class JobNameMetadataAnalyzer(object):
 			pairs = jobname.split(self.separator)
 			# Part of the trick described below... We translated all = signs to spaces, so we're looking for a space here and not an equal sign
 			keyvalues = [tuple(pair.split(" ",1)) for pair in pairs]
+			
 			return dict(keyvalues)
 		except:
-			print traceback.format_exc()
+			logging.error(traceback.format_exc())
 			return None
 
 class Job(object):
@@ -160,6 +161,7 @@ class JobRuntimeFile(object):
 		self.mapped_job_name_separator = mapped_job_name_separator
 		self.maximum_jobname_metadata_length = maximum_jobname_metadata_length
 		self.data = {}
+		self.job_name_parsing_error = False
 		self.read_job_runtime_filename()
 		self.analyze_counters()
 		self.flatten_counters()
@@ -199,8 +201,9 @@ class JobRuntimeFile(object):
 			return
 
 		job_name_analyzer = JobNameMetadataAnalyzer(self.mapped_job_name_separator)
-		
+
 		job_name_metadata_map = job_name_analyzer.analyze(self.data['JOBNAME'])
+		self.job_name_parsing_error = job_name_metadata_map is None
 
 		if job_name_metadata_map is None:
 			return
@@ -502,6 +505,7 @@ class HadoopJobParser(object):
 
 		self.job_parsing_error_count = 0
 		self.job_history_error_count = 0
+		self.job_name_parsing_error_count = 0
 
 	def parse(self):
 		self.jobs = []
@@ -513,6 +517,8 @@ class HadoopJobParser(object):
 				if i % 10 == 0:
 					logging.info("Handling file %d out of %d " % (i,jhp.job_history_length()))
 				j = Job(conf_filename,runtime_filename,self.time_bucket_field,self.time_bucket_interval,self.mapped_job_name_metadata,self.mapped_job_name_separator,self.maximum_jobname_metadata_length)
+				if j.r.job_name_parsing_error:
+					self.job_name_parsing_error_count += 1
 	
 				self.jobs.append(j)
 			except Exception,e:
@@ -763,6 +769,7 @@ if __name__ == '__main__':
 			metric_client.add_metric('%sstats.total_time' % metric_name_prefix,total_time,start_time)
 			metric_client.add_metric('%sstats.job_parsing_error_count' % metric_name_prefix,parser.job_parsing_error_count,start_time)
 			metric_client.add_metric('%sstats.job_history_error_count' % metric_name_prefix,parser.job_history_error_count,start_time)
+			metric_client.add_metric('%sstats.job_name_parsing_error_count' % metric_name_prefix,parser.job_name_parsing_error_count,start_time)
 
 			metric_client.done()
 
