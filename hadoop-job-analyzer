@@ -314,7 +314,7 @@ class JobConfFile(object):
 
 
 	def __str__(self):
-		return "job_id=%s,jt=%s,jt_start_ts=%s,job_ts=%s,job_number=%s,data=%s" % (self.job_id,self.jt,self.jt_start_ts,self.job_ts,self.job_number,self.data)
+		return "job_conf_filename=%s,data=%s" % (self.job_conf_filename,self.data)
 	__repr__ = __str__
 
 
