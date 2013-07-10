@@ -87,6 +87,8 @@ class JobNameMetadataAnalyzer(object):
 
 	def analyze(self,jobname):
 		try:
+			if '\n' in jobname or '\t' in jobname:
+				raise Exception('job names cannot contain new lines or tabs')
 			pairs = jobname.split(self.separator)
 			# Part of the trick described below... We translated all = signs to spaces, so we're looking for a space here and not an equal sign
 			keyvalues = [tuple(pair.split(" ",1)) for pair in pairs]
