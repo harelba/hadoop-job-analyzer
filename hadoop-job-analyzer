@@ -252,7 +252,7 @@ class JobRuntimeFile(object):
                 f = file('/var/tmp/job-runtime-file.tmp',"rb")
 
 		self.data = {}
-		reader = csv.reader(f,delimiter=' ',quotechar='"')
+		reader = csv.reader(f,delimiter=' ',quotechar='"',escapechar='\\')
 		for line in reader:
 			if len(line) == 0:
 				continue
@@ -526,7 +526,7 @@ class HadoopJobParser(object):
 			except Exception,e:
 				self.job_parsing_error_count += 1
 				if self.relaxed:
-					logging.error("Exception while handling files %s,%s. Relaxed mode, continuing to next job file" % (conf_filename,runtime_filename))
+					logging.error("Exception while handling files %s,%s. Relaxed mode, continuing to next job file. %s" % (conf_filename,runtime_filename,traceback.format_exc()))
 				else:
 					logging.error("Exception while handlnig files %s,%s. Stopping. Consider relaxed mode if needed. %s" % (conf_filename,runtime_filename,traceback.format_exc()))
 					raise
@@ -775,7 +775,7 @@ if __name__ == '__main__':
 
 			metric_client.done()
 
-			logging.info("Done. Total time taken is %4.3f seconds. There have been %d job parsing errors" % (total_time,parser.job_parsing_error_count))
+			logging.info("Done. Total time taken is %4.3f seconds, with %d job parsing errors, %s job history errors, and %s job name parsing errors" % (total_time,parser.job_parsing_error_count,parser.job_history_error_count,parser.job_name_parsing_error_count))
 	except Exception,e:
 		logging.fatal("FAILED. Total time taken is %4.3f seconds" % (time.time() - start_time))
 		show_error_and_exit("There was an error during job analysis. Consider using relaxed flag if needed. %s" % traceback.format_exc(),error_code=100,show_help=False)
