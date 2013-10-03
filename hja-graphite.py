@@ -48,6 +48,7 @@ def _do_send(metrics_tuples):
 		data_list.append(data)
 
 	data = "\n".join(data_list)
+	data += "\n"
 	
 	try:
 		sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)

@@ -711,7 +711,8 @@ if __name__ == '__main__':
 	if options.metric_name_prefix is None and not should_list_available_fields:
 		show_error_and_exit("Metric name prefix needs to be provided")
 
-	metric_name_prefix = materialize_metric_name_prefix(options.metric_name_prefix)
+	if options.metric_name_prefix is not None:
+		metric_name_prefix = materialize_metric_name_prefix(options.metric_name_prefix)
 
 	if options.metric_client_type is None and not should_list_available_fields:
 		show_error_and_exit("Metric client type must be provided")
