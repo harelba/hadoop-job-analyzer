@@ -73,6 +73,9 @@ By default the tool will stop if there is an analysis problem. You can use the `
 
 Part of the problems can reside in minor changes between the various hadoop cluster versions, which can be fixed quickly, so I would appreciate any feedback regarding issues like that, and quickly fix them.
 
+## Metadata Naming Convention and Measurement Units
+See [here](METADATA_NAMING.md) for details.
+
 ## Metric backend plugins
 Read [here](METRIC_BACKENDS.md) on the metric backend plugins.
 
