@@ -4,7 +4,7 @@
 # This is an example dashboard, matching to the following execution of the tool:
 #
 #
-$(dirname $0)/hadoop-job-analyzer/hadoop-job-analyzer -f $HISTORY_DIR -p USER/OWNER/SOURCE_HOST/SERVICE/DOMAIN -M -n 'data.hadoop.jobtracker.${HOSTNAME}' -C graphite -P server=graphite,port=2003 -r -i 3600
+./hadoop-job-analyzer -f $HISTORY_DIR -p USER/OWNER/SOURCE_HOST/SERVICE/DOMAIN -M -n 'data.hadoop.jobtracker.${HOSTNAME}' -C graphite -P server=graphite,port=2003 -r -i 3600
 #
 #
 # HISTORY_DIR is obviously the history folder in job tracker
