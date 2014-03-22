@@ -25,6 +25,44 @@ import logging
 import logging.handlers
 import random
 import fnmatch
+from xml.etree.cElementTree import iterparse
+import cPickle
+
+class CachedMetricProxy(object):
+	def __init__(self,metric_client,key):
+		self.FILENAME = '/tmp/last_metric_tuples_%(key)s.pickle' % vars()
+		logging.info("Initializing cached metric proxy using filename %s" % self.FILENAME)
+		self.metric_tuple_map = {}
+		try:
+			self.last_metric_tuple_map = cPickle.load(file(self.FILENAME))
+		except:
+			logging.warning("Warning! Metric proxy cache file has not been found. Lots of metrics will be sent during this execution. The cache will be created for further executions, so next executions will be more efficient")
+			self.last_metric_tuple_map = {}
+		self.metric_client = metric_client
+		self.send_request_count = 0
+		self.actual_metrics_sent = 0
+
+	def initialize(self,params):
+		self.metric_client.initialize(params)
+
+	def start_projection(self,proj):
+		self.metric_client.start_projection(proj)
+
+	def end_projection(self,proj):
+		self.metric_client.end_projection(proj)
+
+	def add_metric(self,name,value,timestamp):
+		self.send_request_count += 1
+		t = (name,value,timestamp)
+		self.metric_tuple_map[t] = t
+		if not t in self.last_metric_tuple_map:
+			self.actual_metrics_sent += 1
+			self.metric_client.add_metric(name,value,timestamp)
+
+	def done(self):
+		cPickle.dump(self.metric_tuple_map,file(self.FILENAME,'w'))
+		logging.info("Sending only %d metrics out of %d metric requests - All skipped metrics have already been sent",self.actual_metrics_sent,self.send_request_count)
+		self.metric_client.done()
 
 class CounterGroup(object):
 	"""
@@ -89,6 +127,9 @@ class JobNameMetadataAnalyzer(object):
 		try:
 			if '\n' in jobname or '\t' in jobname:
 				raise Exception('job names cannot contain new lines or tabs')
+			if self.separator not in jobname:
+				jobname = 'NON_COMPLIANT_JOB_NAME %s' % jobname.replace(" ","_")
+				logging.warning("Found non compliant job name. Changed it to %s" % jobname)
 			pairs = jobname.split(self.separator)
 			# Part of the trick described below... We translated all = signs to spaces, so we're looking for a space here and not an equal sign
 			keyvalues = [tuple(pair.split(" ",1)) for pair in pairs]
@@ -103,7 +144,9 @@ class Job(object):
 		self.time_bucket_field = time_bucket_field
 		self.time_bucket_interval = time_bucket_interval
 		self.c = JobConfFile(conf_filename)
-		self.r = JobRuntimeFile(runtime_filename,mapped_job_name_metadata,mapped_job_name_separator,maximum_jobname_metadata_length)
+		# TODO blacklisted counter pattern should be exposed as a parameter. Currently it removes all MultiInput/MultipleOutputs counters, which 
+		# contain a lot of per-execution garbage
+		self.r = JobRuntimeFile(runtime_filename,mapped_job_name_metadata,mapped_job_name_separator,maximum_jobname_metadata_length,'(MultiInput|MultipleOutputs)')
 		self.data = {}
 		self.analyze()
 
@@ -157,18 +200,23 @@ class JobRuntimeFile(object):
 	"""
 	Encapsulates the parsing and data of a hadoop job runtime file
 	"""
-	def __init__(self,job_runtime_filename,mapped_job_name_metadata,mapped_job_name_seperator,maximum_jobname_metadata_length):
+	def __init__(self,job_runtime_filename,mapped_job_name_metadata,mapped_job_name_seperator,maximum_jobname_metadata_length,blacklisted_counter_name_pattern_str):
 		self.job_runtime_filename = job_runtime_filename
 		self.mapped_job_name_metadata = mapped_job_name_metadata
 		self.mapped_job_name_separator = mapped_job_name_separator
 		self.maximum_jobname_metadata_length = maximum_jobname_metadata_length
 		self.data = {}
 		self.job_name_parsing_error = False
+		self.blacklisted_counter_name_pattern = re.compile(blacklisted_counter_name_pattern_str)
 		self.read_job_runtime_filename()
 		self.analyze_counters()
 		self.flatten_counters()
 		self.enrich_data()
 
+	def should_ignore_counter(self,k):
+		m = self.blacklisted_counter_name_pattern.search(k)
+		return m is not None		
+				
 	def flatten_counters(self):
 		"""
 		Flattens all counter instances into separate counter_group.counter.value
@@ -181,6 +229,9 @@ class JobRuntimeFile(object):
 				self.new_entries = {}
 				for counter_group in v.counter_groups:
 					for counter in counter_group.counters:
+						if self.should_ignore_counter(counter_group.name) or self.should_ignore_counter(counter.name):
+							logging.info("Skipping counter that matches blacklisted counter name pattern. counter group name is %s counter name is %s" % (counter_group.name,counter.name))
+							continue
 						self.new_entries['%s.%s.%s' % (k,counter_group.name,counter.name)] = counter.value
 				self.new_data.update(self.new_entries)
 
@@ -238,6 +289,10 @@ class JobRuntimeFile(object):
 		      the file as a space delimited csv.
 		TODO: Make this part multi-thread safe, so we can make things parallel in the future
 		"""
+
+		if os.path.getsize(self.job_runtime_filename) == 0:
+			raise Exception('Job Runtime file is of size 0 - no use in trying to analyze it')
+
 		f = file(self.job_runtime_filename,'rb')
                 temp_file = file('/var/tmp/job-runtime-file.tmp',"wb")
                 while 1:
@@ -310,19 +365,29 @@ class JobConfFile(object):
 		self.data['JOB_TRACKER_START_TIME'] = jcf.jt_start_ts
 		self.data['JOB_NUMBER'] = jcf.job_number
 
-		from xml.dom.minidom import parse
-		doc = parse(self.job_conf_filename)
-		properties = [p for p in doc.firstChild.childNodes if p.nodeName == 'property']
-		for prop in properties:
-			key = [x for x in prop.childNodes if x.nodeName == 'name'][0].firstChild.nodeValue
-			value = [x for x in prop.childNodes if x.nodeName == 'value'][0].firstChild.nodeValue
-			self.properties[key] = value
+		if os.path.getsize(self.job_conf_filename) == 0:
+			raise Exception('Conf file is of size 0 - no use in analyzing. file name = %s' % self.job_conf_filename)
+
+		self.properties = {}
+		name = None
+		value = None
+		for event,elem in iterparse(self.job_conf_filename):
+			if elem.tag == 'name':
+				name = elem.text
+			elif elem.tag == 'value':
+				if name == None:
+					logging.error("Could not find matching name/value when reading conf file %s. Trying to continue" % self.job_conf_filename)
+					continue
+				value = elem.text
+				if name is not None and value is not None:
+					self.properties[name] = value
+				name = None
+				value = None
 
 		if 'mapreduce.job.submithost' in self.properties:
 			self.data['SOURCE_HOST'] = self.properties['mapreduce.job.submithost'].replace(".","_")
 		else:
 			self.data['SOURCE_HOST'] = 'unknown-host'
-
 
 	def __str__(self):
 		return "job_conf_filename=%s,data=%s" % (self.job_conf_filename,self.data)
@@ -345,6 +410,8 @@ class JobHistoryProvider(object):
 	def analyze(self):
 		conf_filenames = []
 		runtime_filenames = []
+		p = re.compile('(?P<job_id>job_[0-9]+_[0-9]+)_')
+		runtime_filenames_map = {}
 		# Collect all conf/runtime files from the disk recursively (CDH4 has the data partitioned in multiple folders)
 		for root,dirnames,filenames in os.walk(self.history_folder):
 			for filename in filenames:
@@ -352,20 +419,25 @@ class JobHistoryProvider(object):
 					conf_filenames.append('%s/%s' % (root,filename))
 				elif not fnmatch.fnmatch(filename,'*.crc'):
 					runtime_filenames.append('%s/%s' % (root,filename))
-		# Now go over all conf file names and find a matching runtime file for each. This is hardly "efficient" since it's
-		# in O(n^2), but it provides for a more robust behvaior, less prone to hadoop version differences etc (and partically
-		# It's not a big deal performance wise)
+					m = p.search(filename)
+					if m is not None:
+						runtime_filenames_map[m.group('job_id')] = '%s/%s' % (root,filename)
+		i = 0
 		for conf_filename in conf_filenames:
+			if i % 100 == 0:
+				logging.info("Passed %s conf filenames" % i)
+			i += 1
 			jcf = JobConfFilename(conf_filename)
 			job_id = jcf.job_id
-			matching_runtime_files = filter(lambda fn: job_id in fn,runtime_filenames)
-			if len(matching_runtime_files) != 0:
-				self.pairs.append((conf_filename,matching_runtime_files[0]))
+			if job_id in runtime_filenames_map:
+				self.pairs.append((conf_filename,runtime_filenames_map[job_id]))
 			else:
 				logging.error('Could not find matching runtime file for conf file %s' % conf_filename)
 				self.job_error_count += 1
 				if not relaxed:
 					raise Exception('Could not find matching runtime file for conf file %s' % conf_filename)
+				else:
+					logging.warning("Relaxed mode - skipping file %s" % conf_filename)
 		
 	def job_history_length(self):
 		return len(self.pairs)
@@ -483,14 +555,15 @@ class Projection(object):
 
 		prefix is prepended to all metric names
 		"""
-		projection_spec_str = self.normalize("_".join(self.spec))
+		projection_spec_str = self.normalize("-".join(self.spec))
+		projection_nodes_str = self.normalize(".".join(self.spec))
 		values = []
 		for time_bucket,v1 in self.projection.iteritems():
 			for projection_key,v2 in v1.iteritems():
-				projection_key_str = self.normalize("_".join([self.normalize(x) for x in projection_key]))
+				projection_nodes_str = ".".join([self.normalize(x) for x in projection_key])
 				for metric,value in v2.iteritems():
 					metric = self.normalize(metric)
-					metric_name = '%(prefix)s%(projection_spec_str)s.%(projection_key_str)s.%(metric)s.value' % vars()
+					metric_name = '%(prefix)s%(projection_spec_str)s.%(projection_nodes_str)s.%(metric)s.value' % vars()
 					metric_value = value
 					metric_time_bucket = time_bucket
 					values.append((metric_name,metric_value,metric_time_bucket))
@@ -616,16 +689,16 @@ class HadoopJobMetricsSender(object):
 	def _send_using_metric_client(self):
 		# For each projection
 		for proj in self.projections:
-			self.metric_client.projection_started(proj)
+			self.metric_client.start_projection(proj)
 			# Fetch all the metrics for that projection
 			metrics = proj.fetch_projection_values('%sprojections.' % self.metric_name_prefix)
 
-			logging.info("Sending %d metrics for projection %s" % (len(metrics),proj))
+			logging.info("Requesting send of %d metrics for projection %s (actual metrics sent will be lower, depending on previous data sent to the metric backend)" % (len(metrics),proj))
 			for metric in metrics:
-				self.metric_client.add_projection_metric(proj,metric[0],'%4.3f' % metric[1],int(metric[2]))
-			logging.info("Done Sending %d metrics for projection %s" % (len(metrics),proj))
+				self.metric_client.add_metric(metric[0],'%4.3f' % metric[1],int(metric[2]))
+			logging.info("Done Requesting sending %d metrics for projection %s" % (len(metrics),proj))
 
-			self.metric_client.projection_finished(proj)
+			self.metric_client.end_projection(proj)
 
 def setup_logging():
 	FORMAT = '%(asctime)-15s %(levelname)s %(message)s'
@@ -717,8 +790,7 @@ if __name__ == '__main__':
 	if options.metric_name_prefix is None and not should_list_available_fields:
 		show_error_and_exit("Metric name prefix needs to be provided")
 
-	if options.metric_name_prefix is not None:
-		metric_name_prefix = materialize_metric_name_prefix(options.metric_name_prefix)
+	metric_name_prefix = materialize_metric_name_prefix(options.metric_name_prefix)
 
 	if options.metric_client_type is None and not should_list_available_fields:
 		show_error_and_exit("Metric client type must be provided")
@@ -742,10 +814,11 @@ if __name__ == '__main__':
 		else:
 			try:
 				sys.path.append(code_path)
-				metric_client = __import__(metric_client_module_name)
+				key = os.path.abspath(options.history_folder).replace("/","_") + "__" + options.metric_client_type + "__interval" + str(time_bucket_interval)
+				metric_client = CachedMetricProxy(__import__(metric_client_module_name),key)
 				logging.info("Using metric client %s" % options.metric_client_type)
 				metric_client.initialize(metric_client_params)
-				logging.info("Metric client intiialized with params %s" % str(metric_client_params))
+				logging.info("Metric client initialized with params %s" % str(metric_client_params))
 			except:
 				show_error_and_exit("Could not load metric client %s. module name %s not found. Traceback %s" % (options.metric_client_type,metric_client_module_name,traceback.format_exc()))
 

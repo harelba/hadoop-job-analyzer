@@ -22,14 +22,11 @@ def initialize(params):
 		logging.error("Graphite metric client requires server and port parameters")
 		raise e
 
-def projection_started(proj):
+def start_projection(proj):
 	pass
 
-def projection_finished(proj):
+def end_projection(proj):
 	pass
-
-def add_projection_metric(proj,name,value,timestamp):
-	add_metric(name,value,timestamp)
 
 def add_metric(name,value,timestamp):
 	global metrics_to_send
