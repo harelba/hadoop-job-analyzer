@@ -5,98 +5,143 @@
     "defaultLineWidth": 3, 
     "from": "", 
     "width": 700,
-    "height": 300, 
+    "height": 500, 
     "timeBack": "48h", 
-    "legend": true, 
+    "legend": true,
     "refresh": true, 
     "refreshIntervalSeconds": 120, 
     "theme": "black-tie", 
-    "title": "Hadoop Job Analysis Information", 
+    "title": "Hadoop Job Tracking Information", 
     "until": "", 
-    "user": "hadoop_job_analyzer", 
+    "user": "harel", 
     "data": [
         {
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.JOB_STATUS.SUCCESS.value,6,'sumSeries')",
-            "title": "Successful Job Counts per selected cross section"
-        },       
-        {
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.JOB_STATUS.FAILURE.value,6,'sumSeries')",
-            "title": "Failed Job Counts per selected cross section"
-        }, 
-        {
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.TOTAL_DURATION.value,6,'sumSeries')",
-            "title": "Total job duration per selected cross section"
-        },        
-        {
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.TOTAL_MAPS.value,6,'sumSeries')",
-            "title": "Total map tasks per selected cross section"
-        },        
-        {
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.FAILED_MAPS.value,6,'sumSeries')",
-            "title": "Total Failed map tasks per "
-        },        
-	{
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.TOTAL_REDUCES.value,6,'sumSeries')",
-            "title": "Total reduce tasks per selected cross section"
-        },        
-        {
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.FAILED_REDUCES.value,6,'sumSeries')",
-            "title": "Total Failed reduce tasks per selected cross section"
-        },        
-	{
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.COUNTERS.FileSystemCounters.FILE_BYTES_READ.value,6,'sumSeries')",
-            "title": "Total file bytes read from disk, per selected cross section"
-        },        
-        {
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.COUNTERS.FileSystemCounters.FILE_BYTES_WRITTEN.value,6,'sumSeries')",
-            "title": "Total file bytes written to disk, per selected cross section"
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.JOB_STATUS.SUCCESS.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "Successful Job Counts"
         },
-	{
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.COUNTERS.org_apache_hadoop_mapred_Task__Counter.MAP_INPUT_RECORDS.value,6,'sumSeries')",
-            "title": "Map Tasks total input records, per selected cross section"
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.JOB_STATUS.FAILURE.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "Failed Job Counts"
         },
-	{
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.COUNTERS.org_apache_hadoop_mapred_Task__Counter.MAP_OUTPUT_RECORDS.value,6,'sumSeries')",
-            "title": "Map Tasks total output records, per selected cross section"
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.TOTAL_DURATION.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "Total job durations"
         },
-	{
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.COUNTERS.org_apache_hadoop_mapred_Task__Counter.REDUCE_INPUT_RECORDS.value,6,'sumSeries')",
-            "title": "Reduce Tasks total input records, per selected cross section"
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.TOTAL_MAPS.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "Total Map Tasks"
         },
-	{
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.COUNTERS.org_apache_hadoop_mapred_Task__Counter.REDUCE_OUTPUT_RECORDS.value,6,'sumSeries')",
-            "title": "Reduce Tasks total output records, per selected cross section"
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.FAILED_MAPS.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "Failed Map Tasks"
         },
-	{
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.COUNTERS.org_apache_hadoop_mapred_Task__Counter.REDUCE_SHUFFLE_BYTES.value,6,'sumSeries')",
-            "title": "Reduce Shuffle Bytes, per selected cross section"
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.TOTAL_REDUCES.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "Total Reduce Tasks"
         },
-	{
-            "params" : "areaMode=stacked",
-            "target": "groupByNode(data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.projections.${crosssection}.*.COUNTERS.org_apache_hadoop_mapred_Task__Counter.SPILLED_RECORDS.value,6,'sumSeries')",
-            "title": "Spilled record count, per selected cross section"
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.FAILED_REDUCES.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "Failed Reduce Tasks"
+        },
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.COUNTERS.*FileSystemCounter*.FILE_BYTES_READ.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "File Bytes Read"
+        },
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.COUNTERS.*FileSystemCounter*.FILE_BYTES_WRITTEN.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "File Bytes Written"
+        },
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.COUNTERS.*.MAP_INPUT_RECORDS.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "Map Input Record Count"
+        },
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.COUNTERS.*.MAP_OUTPUT_RECORDS.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "Map Output Record Count"
+        },
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.COUNTERS.*.REDUCE_INPUT_RECORDS.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "Reduce Input Record Count"
+        },
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.COUNTERS.*.REDUCE_OUTPUT_RECORDS.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "Reduce Output Record Count"
+        },
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.COUNTERS.*.REDUCE_SHUFFLE_BYTES.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "Reduce Shuffle Bytes"
+        },
+        {
+            "target": "groupByNode(summarize(data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.${domain}.COUNTERS.*.SPILLED_RECORDS.value,'1hour','sum'),${groupBy},'sumSeries')",
+            "title": "Spilled Record Count"
         }
+
     ], 
     "parameters": {
-        "crosssection": {
+	"datacenter": {
             "type": "dynamic",
-            "query": "data.hadoop.jobtracker.myjobtrackerdomain.myjobtrackerhost.*",
-            "index": 5,
-            "showAll": false
+            "query": "data.hadoop.jobtracker.*",
+            "index": 3,
+            "showAll": true
+        },
+	"jobtracker": {
+            "type": "dynamic",
+            "query": "data.hadoop.jobtracker.${datacenter}.*",
+            "index": 4,
+            "showAll": true
+        },
+	"user": {
+            "type": "dynamic",
+            "query": "data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.*.${owner}.${source_host}.${service}.${domain}",
+            "index": 7,
+            "showAll": true
+        },
+	"owner": {
+            "type": "dynamic",
+            "query": "data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.*.${source_host}.${service}.${domain}",
+            "index": 8,
+            "showAll": true
+        },
+	"source_host": {
+            "type": "dynamic",
+            "query": "data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.*.${service}.${domain}",
+            "index": 9,
+            "showAll": true
+        },
+	"service": {
+            "type": "dynamic",
+            "query": "data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.*.${domain}",
+            "index": 10,
+            "showAll": true
+        },
+	"domain": {
+            "type": "dynamic",
+            "query": "data.hadoop.jobtracker.${datacenter}.${jobtracker}.projections.USER-OWNER-SOURCE_HOST-SERVICE-DOMAIN.${user}.${owner}.${source_host}.${service}.*",
+            "index": 11,
+            "showAll": true
+        },
+        "group-by": {
+            "datacenter": {
+                "groupBy": 3
+            },
+            "jobtracker": {
+                "groupBy": 4
+            },
+            "user": {
+                "groupBy": 7
+            },
+            "owner": {
+                "groupBy": 8
+            },
+            "source_host": {
+                "groupBy": 9
+            },
+            "service": {
+                "groupBy": 10
+            },
+            "domain": {
+                "groupBy": 11
+            }
         }
     }
 }

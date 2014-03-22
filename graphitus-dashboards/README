@@ -1,0 +1,25 @@
+#
+#
+#
+# This is an example dashboard, matching to the following execution of the tool:
+#
+#
+$(dirname $0)/hadoop-job-analyzer/hadoop-job-analyzer -f $HISTORY_DIR -p USER/OWNER/SOURCE_HOST/SERVICE/DOMAIN -M -n 'data.hadoop.jobtracker.${HOSTNAME}' -C graphite -P server=graphite,port=2003 -r -i 3600
+#
+#
+# HISTORY_DIR is obviously the history folder in job tracker
+#
+# -n '....' - This is the prefix of the metrics. Using ${HOSTNAME} is a special token that the tool replaces with "domain.host". This allows easy use of the tool when multiple hadoop clusters exist. 
+#
+# -p defined the required breakdowns. The value origins are as follows:
+#   * USER and SOURCE_HOST are part of every job configuration
+#   * OWNER, SERVICE and DOMAIN are not. They can be added as part of the job names, using the standard job naming "field1=value1||field2=value2||..".  For example, you can name a job "OWNER=operations||SERVICE=healthChecks||DOMAIN=whatever||..." and the tool will automatically parse the name and use the values for the breakdown. 
+#
+#   NOTE: The tool will just use "unknown-value" for everything it doesn't detect, so don't worry, you don't have to change all your job names or anything if you don't want to or can't
+#
+# -C graphite and -P <params> - Send the data to graphite
+#
+# -i 3600 - Aggregate data to 1 hour intervals
+#
+# -r - Relaxed mode - skip parsing issues and continue instead of failing (stats are sent about failure amounts)
+
