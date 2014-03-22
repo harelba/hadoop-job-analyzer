@@ -277,9 +277,15 @@ class JobConfFilename(object):
 
 	def analyze_filename(self):
 		base_name = os.path.split(self.job_conf_filename)[1]
-		self.jt,self.jt_start_ts,_,self.job_ts,self.job_number,_ = base_name.split("_",5)
-		self.job_id = "job_%s_%s" % (self.job_ts,self.job_number)
-
+		try:
+			self.jt,self.jt_start_ts,_,self.job_ts,self.job_number,_ = base_name.split("_",5)
+			self.job_id = "job_%s_%s" % (self.job_ts,self.job_number)
+		except:
+			try:
+				_,self.job_ts,self.job_number,_ = base_name.split("_",3)
+				self.job_id = "job_%s_%s" % (self.job_ts,self.job_number)
+			except:
+				raise Exception("Conf file name format is undetectable")
 		
 class JobConfFile(object):
 	"""
