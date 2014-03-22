@@ -762,6 +762,9 @@ if __name__ == '__main__':
 	                help="Using this flag will provide all the field names available by scanning the currently existing jobs")
 	parser.add_option("-s","--sample-count",dest="sample_count",default=3,
 	                help="Number of samples to provide when using the -l list flag")
+	parser.add_option("-c","--cache-metrics",dest="cache_metrics",default=False,action="store_true",
+	                help="Cache metrics locally so identical metrics will not be sent twice to the metric backend. This can elleviate the load of the metric backend in case of a large set of metrics and when the tool is run periodically")
+
 
 	(options,args) = parser.parse_args()
 
@@ -815,7 +818,12 @@ if __name__ == '__main__':
 			try:
 				sys.path.append(code_path)
 				key = os.path.abspath(options.history_folder).replace("/","_") + "__" + options.metric_client_type + "__interval" + str(time_bucket_interval)
-				metric_client = CachedMetricProxy(__import__(metric_client_module_name),key)
+				metric_client = __import__(metric_client_module_name)
+				if options.cache_metrics:
+					logging.info("Going to cache metric data")
+					metric_client = CachedMetricProxy(metric_client,key)
+				else:
+					logging.info("Not going to cache metric data")
 				logging.info("Using metric client %s" % options.metric_client_type)
 				metric_client.initialize(metric_client_params)
 				logging.info("Metric client initialized with params %s" % str(metric_client_params))
