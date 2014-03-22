@@ -42,7 +42,7 @@ The example graphs above were done with the help of graphitus.
 
 * Full slicing and dicing support - Allows to pinpoint exact changes in behavior over time
 * Provides insights to all internal job metrics
-* Proven in production - Works on four 300-node production cluster for over a year
+* Proven in production - Works on three 300-node production clusters for over a year
 * Allows extending job metadata through the job name itself, using a job name convention
 * Supports both CDH3 and CDH4 hadoop versions.
 * Additional metric backends can be easily add if needed
