@@ -71,24 +71,10 @@ Several examples are provided [here](EXAMPLES.md).
 ## Relaxed Mode 
 By default the tool will stop if there is an analysis problem. You can use the `-r` relaxed mode flag in order ot make the tool continue processing to the next jobs even in the face of errors. Metrics will be sent on job analysis failures and on job name parsing failures.
 
-I would appreciate any feedback regarding issues like that, so I can check if the tool can handle these issues gracefully.
+Part of the problems can reside in minor changes between the various hadoop cluster versions, which can be fixed quickly, so I would appreciate any feedback regarding issues like that, and quickly fix them.
 
 ## Metric backend plugins
-The tool uses a simple plugin mechanism for the metric backend access. A metric backend plugin is just a python module called `hja-<metric-backend-id>.py`, which should implement the following functions:
-
-The stdout plugin (which resides in hja-stdout.py) can be used as an easy baseline for writing a new plugin.
-
-`NOTE:` The interface to the metric plugins is currently an easy (metric_name,metric_value,timestamp) interface, in which the metric name is an already processed string. In the future, depending on need, a more structured interface will be created, which will allow the plugins more freedom.
-
-## Metadata Naming Conventions
-
-* All `_TIME` fields are Unix timestamps, and are eventually removed from the metric sending part (e.g. there is no need to aggregate a bunch of absolute unix timestamps...).
-
-* All `_DURATION` and `_LATENCY` fields are in Seconds
-
-* Counters are flattened automatically to `COUNTERS.<counter-group>.<counter-name>`
-
-* `JOB_STATUS` is treated in a special way since it's an enum. It is falttened out to `JOB_STATUS.<status>` with a value of 1. This allows easy aggregation of job counts per status.
+Read [here](METRIC_BACKENDS.md) on the metric backend plugins.
 
 ## Logging
 The tool writes a rotated log file to the logs/ folder under the location of the tool itself.
