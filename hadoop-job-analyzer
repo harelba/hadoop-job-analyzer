@@ -667,12 +667,15 @@ def materialize_metric_name_prefix(metric_name_prefix):
 	else:
 		HOSTNAME = 'unknown-domain.%s' % os_hostname
 
-	result = metric_name_prefix.replace("${HOSTNAME}",HOSTNAME)
+	if metric_name_prefix is not None:
+		result = metric_name_prefix.replace("${HOSTNAME}",HOSTNAME)
 	
-	if len(result) > 0 and result[-1] != '.':
-		result = result + "."
+		if len(result) > 0 and result[-1] != '.':
+			result = result + "."
 
-	return result
+		return result
+	else:
+		return 'hja.metrics'
 
 class HadoopJobMetricsSender(object):
 	"""
