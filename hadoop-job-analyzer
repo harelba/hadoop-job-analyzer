@@ -164,7 +164,7 @@ class Job(object):
 		Converts all time related metrics to seconds instead of ms
 		"""
 		for k in self.data.keys():
-			if '_TIME' in k:
+			if '_TIME' in k and self.data[k]:
 				self.data[k] = float(self.data[k]/1000.0)
 
 	def numerify_metrics(self):
