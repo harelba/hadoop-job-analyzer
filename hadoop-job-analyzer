@@ -546,7 +546,7 @@ class Projection(object):
 		if metric is None or str(metric).strip() == '':
 			return "empty-value"
 		else:
-			return str(metric).strip().replace("$","__").replace(",","_")
+			return str(metric).strip().replace("$","__").replace(",","_").replace(" ","_")
 
 	def fetch_projection_values(self,prefix):
 		"""
